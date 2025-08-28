@@ -49,6 +49,10 @@ from models.communication import (
 )
 from database.communication_repository import CommunicationRepository
 
+# Service imports
+from services.email_service import email_service
+from services.shipping_service import shipping_service
+
 # Analytics & Business Intelligence imports
 from models.analytics import (
     TimePeriod, CustomReportCreate, CustomReportUpdate, 
@@ -3248,6 +3252,9 @@ async def stripe_webhook(request: Request):
             session = event["data"]["object"]
             session_id = session["id"]
             
+            # Get transaction details for email
+            transaction = await db.payment_transactions.find_one({"session_id": session_id})
+            
             # Update database based on webhook event
             await db.payment_transactions.update_one(
                 {"session_id": session_id},
@@ -3258,6 +3265,40 @@ async def stripe_webhook(request: Request):
                     }
                 }
             )
+            
+            # Send order confirmation email
+            if transaction and transaction.get("customer_info"):
+                try:
+                    customer_info = transaction["customer_info"]
+                    customer_email = customer_info.get("email")
+                    customer_name = customer_info.get("name", "Customer")
+                    
+                    if customer_email:
+                        # Prepare order data for email
+                        package_info = PRODUCT_PACKAGES.get(transaction["package_id"], {})
+                        order_data = {
+                            "order_id": transaction["transaction_id"],
+                            "items": [{
+                                "name": package_info.get("name", "NitePutter Pro Product"),
+                                "id": transaction["package_id"],
+                                "quantity": transaction.get("quantity", 1),
+                                "price": transaction["amount"] / transaction.get("quantity", 1)
+                            }],
+                            "total": transaction["amount"]
+                        }
+                        
+                        # Send confirmation email asynchronously
+                        await email_service.send_order_confirmation(
+                            customer_email=customer_email,
+                            customer_name=customer_name,
+                            order_data=order_data
+                        )
+                        logger.info(f"Order confirmation email sent to {customer_email}")
+                        
+                except Exception as email_error:
+                    logger.error(f"Failed to send confirmation email: {str(email_error)}")
+                    # Don't fail the webhook for email issues
+            
             logger.info(f"Payment completed for session {session_id}")
         
         return {"status": "success"}
@@ -3492,26 +3533,173 @@ async def create_shipping_rate(
 
 @api_router.post("/checkout/calculate-shipping")
 async def calculate_shipping_costs(
-    country: str = Form(...),
+    request: Request,
+    country: str = Form("US"),
     state: str = Form(""),
-    weight: float = Form(1.0),
-    order_value: float = Form(...),
-    ecommerce_repo: EcommerceRepository = Depends(get_ecommerce_repository)
+    zip_code: str = Form(...),
+    items: str = Form("[]"),  # JSON string of cart items
+    shipping_method: str = Form("standard")
 ):
-    """Calculate shipping costs for checkout"""
+    """Calculate shipping costs for checkout using enhanced shipping service"""
     try:
-        shipping_options = await ecommerce_repo.calculate_shipping(
-            country, state, weight, order_value
+        import json
+        
+        # Parse items from JSON string
+        try:
+            cart_items = json.loads(items)
+        except json.JSONDecodeError:
+            cart_items = []
+        
+        if not cart_items:
+            # Default to basic item if no items provided
+            cart_items = [{"id": "basic_putter_light", "quantity": 1}]
+        
+        # Use our enhanced shipping service
+        shipping_info = await shipping_service.calculate_shipping_cost(
+            items=cart_items,
+            destination_zip=zip_code,
+            shipping_method=shipping_method
         )
         
+        # Get all available shipping methods
+        available_methods = shipping_service.get_shipping_methods()
+        
         return {
-            "shipping_options": [option.dict() for option in shipping_options],
-            "available_methods": len(shipping_options)
+            "shipping_info": shipping_info,
+            "available_methods": available_methods,
+            "destination": {
+                "country": country,
+                "state": state,
+                "zip_code": zip_code
+            }
         }
         
     except Exception as e:
         logger.error(f"Error calculating shipping: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to calculate shipping")
+        raise HTTPException(status_code=500, detail=f"Failed to calculate shipping: {str(e)}")
+
+@api_router.get("/orders/{order_id}/tracking")
+async def get_order_tracking(
+    order_id: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Get tracking information for an order"""
+    try:
+        # Find the order
+        order = await db.payment_transactions.find_one({
+            "transaction_id": order_id,
+            "customer_info.email": current_user.email  # Ensure user owns this order
+        })
+        
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Order not found"
+            )
+        
+        # Get tracking info if available
+        tracking_number = order.get("tracking_number")
+        carrier = order.get("carrier", "USPS")
+        
+        if tracking_number:
+            tracking_info = await shipping_service.get_tracking_info(
+                tracking_number=tracking_number,
+                carrier=carrier
+            )
+        else:
+            tracking_info = {
+                "status": "Processing",
+                "message": "Your order is being processed. You'll receive tracking information once it ships.",
+                "estimated_delivery": None
+            }
+        
+        return {
+            "order_id": order_id,
+            "order_status": order.get("order_status", "processing"),
+            "tracking_info": tracking_info,
+            "items": [{
+                "name": PRODUCT_PACKAGES.get(order["package_id"], {}).get("name", "Product"),
+                "quantity": order.get("quantity", 1),
+                "price": order["amount"]
+            }],
+            "order_date": order.get("created_at"),
+            "customer_info": order.get("customer_info", {})
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting order tracking: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get order tracking")
+
+@api_router.post("/admin/orders/{order_id}/ship")
+async def ship_order(
+    order_id: str,
+    tracking_number: str = Form(...),
+    carrier: str = Form("USPS"),
+    current_admin: AdminResponse = Depends(get_current_admin)
+):
+    """Mark an order as shipped and send notification email"""
+    try:
+        if "manage_orders" not in current_admin.permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to manage orders"
+            )
+        
+        # Update order with tracking information
+        result = await db.payment_transactions.update_one(
+            {"transaction_id": order_id},
+            {
+                "$set": {
+                    "order_status": "shipped",
+                    "tracking_number": tracking_number,
+                    "carrier": carrier,
+                    "shipped_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Order not found"
+            )
+        
+        # Get updated order for email
+        order = await db.payment_transactions.find_one({"transaction_id": order_id})
+        
+        # Send shipping notification email
+        if order and order.get("customer_info"):
+            customer_info = order["customer_info"]
+            customer_email = customer_info.get("email")
+            customer_name = customer_info.get("name", "Customer")
+            
+            if customer_email:
+                try:
+                    await email_service.send_shipping_notification(
+                        customer_email=customer_email,
+                        customer_name=customer_name,
+                        order_id=order_id,
+                        tracking_number=tracking_number,
+                        carrier=carrier
+                    )
+                    logger.info(f"Shipping notification sent to {customer_email}")
+                except Exception as email_error:
+                    logger.error(f"Failed to send shipping notification: {str(email_error)}")
+        
+        return {
+            "message": "Order marked as shipped successfully",
+            "order_id": order_id,
+            "tracking_number": tracking_number,
+            "carrier": carrier
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error shipping order: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to ship order")
 
 
 # ===== TAX MANAGEMENT =====
