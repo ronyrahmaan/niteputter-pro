@@ -1,398 +1,597 @@
-# Nite Putter Pro - Production Deployment & Maintenance Guide
+# NitePutter Pro - Complete Deployment Guide
 
-## 📋 Prerequisites
+## 📋 Table of Contents
+
+1. [Quick Start](#quick-start)
+2. [Prerequisites](#prerequisites)
+3. [Environment Setup](#environment-setup)
+4. [Deployment Methods](#deployment-methods)
+5. [SSL Certificate Setup](#ssl-certificate-setup)
+6. [Database Setup](#database-setup)
+7. [Monitoring Setup](#monitoring-setup)
+8. [Backup Configuration](#backup-configuration)
+9. [Troubleshooting](#troubleshooting)
+10. [Maintenance](#maintenance)
+
+## 🚀 Quick Start
+
+```bash
+# Clone repository
+git clone https://github.com/niteputter/niteputter-pro.git
+cd niteputter-pro
+
+# Set up environment
+cp backend/.env.example backend/.env.production
+# Edit backend/.env.production with your values
+
+# Deploy to production
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh production deploy
+```
+
+## ✅ Prerequisites
 
 ### System Requirements
-- **Server**: Ubuntu 22.04 LTS or CentOS 8+ (minimum 4GB RAM, 2 CPU cores)
-- **Node.js**: Version 18+ 
-- **Python**: Version 3.11+
-- **MongoDB**: Version 6.0+
-- **Redis**: Version 7.0+ (optional, for caching)
-- **Domain**: Registered domain name with SSL certificate
-- **Email**: SMTP server for transactional emails
+- Ubuntu 20.04+ or CentOS 8+
+- Docker 20.10+
+- Docker Compose 2.0+
+- Git 2.25+
+- 4+ CPU cores
+- 8GB+ RAM
+- 100GB+ SSD storage
 
-### Development Tools
-- **Docker & Docker Compose** (recommended for production)
-- **Git** for version control
-- **PM2** for process management
-- **Nginx** for reverse proxy and SSL
+### Required Accounts
+- [ ] MongoDB Atlas account (or self-hosted MongoDB)
+- [ ] Redis Cloud account (or self-hosted Redis)
+- [ ] Stripe account with API keys
+- [ ] SendGrid account for emails
+- [ ] AWS account for S3 storage
+- [ ] Domain name with DNS access
 
-## 🚀 Production Deployment
-
-### 1. Server Setup
+### Installation Commands
 
 ```bash
 # Update system
 sudo apt update && sudo apt upgrade -y
 
-# Install essential packages
-sudo apt install -y git nginx certbot python3-certbot-nginx nodejs npm python3 python3-pip python3-venv
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER
 
-# Install MongoDB
-curl -fsSL https://www.mongodb.org/static/pgp/server-6.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-6.0.gpg --dearmor
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-6.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
-sudo apt update && sudo apt install -y mongodb-org
+# Install Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
 
-# Install Redis (optional)
-sudo apt install redis-server
+# Install required tools
+sudo apt install -y git curl wget jq nginx certbot python3-certbot-nginx
+
+# Verify installations
+docker --version
+docker-compose --version
+git --version
+```
+
+## 🔧 Environment Setup
+
+### 1. Create Production Environment File
+
+```bash
+cd /opt/niteputter
+nano backend/.env.production
+```
+
+### 2. Required Environment Variables
+
+```env
+# Application
+APP_NAME="NitePutter Pro"
+APP_ENV=production
+APP_DEBUG=false
+SECRET_KEY=<generate-with-openssl-rand-hex-32>
+
+# MongoDB (Use Atlas for production)
+MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/
+MONGODB_DB_NAME=niteputter_prod
+MONGO_ROOT_USERNAME=niteputter
+MONGO_ROOT_PASSWORD=<secure-password>
+
+# Redis
+REDIS_URL=redis://default:password@redis-endpoint:6379
+REDIS_PASSWORD=<secure-password>
+
+# Stripe
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_PUBLISHABLE_KEY=pk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+# Email (SendGrid)
+SENDGRID_API_KEY=SG....
+FROM_EMAIL=orders@niteputter.com
+SUPPORT_EMAIL=support@niteputter.com
+
+# AWS S3
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_S3_BUCKET_NAME=niteputter-products
+AWS_S3_REGION=us-east-1
+
+# Monitoring
+GRAFANA_PASSWORD=<secure-password>
+SENTRY_DSN=https://...@sentry.io/...
+```
+
+### 3. Generate Secure Keys
+
+```bash
+# Generate SECRET_KEY
+openssl rand -hex 32
+
+# Generate passwords
+openssl rand -base64 32
+
+# Generate MongoDB password
+openssl rand -base64 24 | tr -d "=+/" | cut -c1-25
+```
+
+## 🚢 Deployment Methods
+
+### Method 1: Automated Deployment Script
+
+```bash
+# Make script executable
+chmod +x scripts/deploy.sh
+
+# Deploy to production
+./scripts/deploy.sh production deploy
+
+# Deploy to staging
+./scripts/deploy.sh staging deploy
+
+# Rollback if needed
+./scripts/deploy.sh production rollback
+```
+
+### Method 2: Docker Compose Production
+
+```bash
+# Pull latest code
+git pull origin main
+
+# Build images
+docker-compose -f docker-compose.production.yml build
 
 # Start services
-sudo systemctl start mongod nginx redis-server
-sudo systemctl enable mongod nginx redis-server
+docker-compose -f docker-compose.production.yml up -d
+
+# Check logs
+docker-compose -f docker-compose.production.yml logs -f
+
+# Scale backend
+docker-compose -f docker-compose.production.yml up -d --scale backend=3
 ```
 
-### 2. Environment Configuration
+### Method 3: Manual Deployment
 
 ```bash
-# Clone repository
-git clone https://github.com/your-username/niteputter_version4.git
-cd niteputter_version4-main
-
-# Create production environment file
-cp backend/.env.example backend/.env.production
-```
-
-**Configure `backend/.env.production`:**
-```env
-# CRITICAL: Update ALL values for production
-ENVIRONMENT=production
-DEBUG=false
-
-# Generate secure JWT secret: python -c "import secrets; print(secrets.token_urlsafe(64))"
-JWT_SECRET=YOUR_SECURE_64_CHARACTER_JWT_SECRET_HERE
-
-# Database (use your production MongoDB connection)
-MONGODB_URL=mongodb://localhost:27017/niteputter_prod
-DB_NAME=niteputter_prod
-
-# Stripe (LIVE keys for production)
-STRIPE_API_KEY=sk_live_YOUR_LIVE_SECRET_KEY
-STRIPE_PUBLISHABLE_KEY=pk_live_YOUR_LIVE_PUBLISHABLE_KEY
-STRIPE_WEBHOOK_SECRET=whsec_YOUR_LIVE_WEBHOOK_SECRET
-
-# Domain configuration
-CORS_ORIGINS=https://your-domain.com
-ALLOWED_HOSTS=your-domain.com,www.your-domain.com
-
-# Email configuration
-SMTP_HOST=smtp.your-provider.com
-SMTP_PORT=587
-SMTP_USER=your-email@your-domain.com
-SMTP_PASSWORD=your-app-password
-
-# Admin account
-SUPER_ADMIN_EMAIL=admin@your-domain.com
-SUPER_ADMIN_PASSWORD=SecurePassword123!
-```
-
-### 3. Backend Deployment
-
-```bash
-# Backend setup
+# 1. Build backend
 cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+docker build -t niteputter/backend:latest .
 
-# Database initialization
-python scripts/create_super_admin.py
-python scripts/setup_content_data.py
+# 2. Build frontend
+cd ../frontend-v2
+docker build -t niteputter/frontend:latest .
 
-# Test backend
-uvicorn server:app --host 0.0.0.0 --port 8000
+# 3. Push to registry
+docker push niteputter/backend:latest
+docker push niteputter/frontend:latest
 
-# Install PM2 for process management
-npm install -g pm2
-
-# Create PM2 ecosystem file
-cat > ecosystem.config.js << 'EOF'
-module.exports = {
-  apps: [{
-    name: 'niteputter-api',
-    script: 'uvicorn',
-    args: 'server:app --host 0.0.0.0 --port 8000 --workers 4',
-    cwd: '/path/to/niteputter_version4-main/backend',
-    env: {
-      NODE_ENV: 'production',
-      ENV_FILE: '.env.production'
-    },
-    error_file: '/var/log/niteputter-api-error.log',
-    out_file: '/var/log/niteputter-api-out.log',
-    log_file: '/var/log/niteputter-api.log'
-  }]
-}
-EOF
-
-# Start with PM2
-pm2 start ecosystem.config.js
-pm2 startup
-pm2 save
+# 4. Deploy on server
+ssh user@server
+docker pull niteputter/backend:latest
+docker pull niteputter/frontend:latest
+docker-compose up -d
 ```
 
-### 4. Frontend Deployment
+## 🔒 SSL Certificate Setup
+
+### Using Let's Encrypt
 
 ```bash
-cd ../frontend
+# Install Certbot
+sudo apt install certbot python3-certbot-nginx
 
-# Install dependencies
-npm install
+# Generate certificates
+sudo certbot certonly --nginx -d niteputter.com -d www.niteputter.com -d api.niteputter.com
 
-# Create production build configuration
-cat > .env.production << 'EOF'
-REACT_APP_BACKEND_URL=https://your-domain.com/api
-REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_live_YOUR_LIVE_PUBLISHABLE_KEY
-REACT_APP_ENVIRONMENT=production
-EOF
+# Auto-renewal
+sudo certbot renew --dry-run
 
-# Build for production
-npm run build
-
-# Serve with PM2
-pm2 serve build 3000 --name niteputter-frontend --spa
+# Add to crontab
+0 0 * * * /usr/bin/certbot renew --quiet
 ```
 
-### 5. Nginx Configuration
+### Manual SSL Setup
 
 ```bash
-# Create Nginx configuration
-sudo tee /etc/nginx/sites-available/niteputter << 'EOF'
-server {
-    listen 80;
-    server_name your-domain.com www.your-domain.com;
-    return 301 https://$server_name$request_uri;
-}
+# Create SSL directory
+mkdir -p nginx/ssl
 
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com www.your-domain.com;
+# Copy certificates
+cp /path/to/niteputter.com.crt nginx/ssl/
+cp /path/to/niteputter.com.key nginx/ssl/
 
-    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    
-    # Security headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload";
+# Generate DH parameters
+openssl dhparam -out nginx/ssl/dhparam.pem 2048
 
-    # Frontend (React app)
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # Backend API
-    location /api/ {
-        proxy_pass http://localhost:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # API rate limiting
-        limit_req zone=api burst=20 nodelay;
-    }
-
-    # Static files caching
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-    }
-}
-
-# Rate limiting
-http {
-    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
-}
-EOF
-
-# Enable site
-sudo ln -s /etc/nginx/sites-available/niteputter /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-
-# Setup SSL with Let's Encrypt
-sudo certbot --nginx -d your-domain.com -d www.your-domain.com
+# Set permissions
+chmod 600 nginx/ssl/*.key
+chmod 644 nginx/ssl/*.crt
 ```
 
-## 🔐 Security Configuration
+## 🗄️ Database Setup
 
-### 1. Firewall Setup
-```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx Full'
-sudo ufw deny 8000  # Block direct access to backend
-sudo ufw deny 3000  # Block direct access to frontend
-sudo ufw enable
-```
+### MongoDB Atlas Setup
 
-### 2. MongoDB Security
+1. **Create Cluster**
+   ```
+   - Choose M10 or higher for production
+   - Select region closest to your users
+   - Enable backup
+   ```
+
+2. **Configure Security**
+   ```
+   - Add IP whitelist
+   - Create database user
+   - Enable encryption at rest
+   ```
+
+3. **Get Connection String**
+   ```
+   mongodb+srv://username:password@cluster.mongodb.net/niteputter_prod
+   ```
+
+### Self-Hosted MongoDB
+
 ```bash
-# Create MongoDB admin user
-mongosh
-> use admin
-> db.createUser({
-    user: "admin",
-    pwd: "SecureMongoPassword123!",
-    roles: ["userAdminAnyDatabase", "dbAdminAnyDatabase", "readWriteAnyDatabase"]
+# Create data directory
+sudo mkdir -p /data/mongodb
+
+# Run MongoDB container
+docker run -d \
+  --name mongodb \
+  -p 27017:27017 \
+  -v /data/mongodb:/data/db \
+  -e MONGO_INITDB_ROOT_USERNAME=admin \
+  -e MONGO_INITDB_ROOT_PASSWORD=secure_password \
+  mongo:7.0 --auth
+
+# Initialize database
+docker exec -it mongodb mongosh
+use niteputter_prod
+db.createUser({
+  user: "niteputter",
+  pwd: "password",
+  roles: [{role: "readWrite", db: "niteputter_prod"}]
 })
-
-# Enable authentication in /etc/mongod.conf
-sudo nano /etc/mongod.conf
-# Add:
-# security:
-#   authorization: enabled
-
-sudo systemctl restart mongod
 ```
 
-### 3. Backup Configuration
+### Database Initialization
+
+```bash
+# Connect to production database
+docker-compose -f docker-compose.production.yml exec backend bash
+
+# Run seed script
+python scripts/seed_all.py
+
+# Verify data
+python scripts/check_database.py
+```
+
+## 📊 Monitoring Setup
+
+### Grafana Dashboard
+
+1. **Access Grafana**
+   ```
+   https://grafana.niteputter.com
+   Username: admin
+   Password: <GRAFANA_PASSWORD>
+   ```
+
+2. **Import Dashboards**
+   - Go to Dashboards > Import
+   - Upload `monitoring/dashboards/*.json`
+
+3. **Configure Alerts**
+   ```
+   - API response time > 2s
+   - Error rate > 1%
+   - CPU usage > 80%
+   - Memory usage > 90%
+   - Disk usage > 85%
+   ```
+
+### Prometheus Configuration
+
+```yaml
+# monitoring/prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'backend'
+    static_configs:
+      - targets: ['backend:8000']
+    
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:9113']
+    
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:9121']
+```
+
+### Application Monitoring
+
+```bash
+# Check health status
+curl https://api.niteputter.com/monitoring/health
+
+# Get metrics (requires auth)
+curl -H "Authorization: Bearer $TOKEN" https://api.niteputter.com/monitoring/metrics
+
+# View logs
+docker-compose -f docker-compose.production.yml logs -f backend
+
+# Real-time monitoring
+watch -n 5 'docker stats --no-stream'
+```
+
+## 💾 Backup Configuration
+
+### Automated Backups
+
 ```bash
 # Create backup script
-sudo tee /opt/backup-niteputter.sh << 'EOF'
+cat > /opt/scripts/backup.sh << 'EOF'
 #!/bin/bash
-BACKUP_DIR="/backup/niteputter"
-DATE=$(date +%Y%m%d_%H%M%S)
-
-# Create backup directory
-mkdir -p $BACKUP_DIR
-
-# MongoDB backup
-mongodump --db niteputter_prod --out $BACKUP_DIR/mongo_$DATE
-
-# Application files backup
-tar -czf $BACKUP_DIR/app_$DATE.tar.gz /path/to/niteputter_version4-main
-
-# Clean old backups (keep 30 days)
-find $BACKUP_DIR -name "*.tar.gz" -mtime +30 -delete
-find $BACKUP_DIR -type d -name "mongo_*" -mtime +30 -exec rm -rf {} \;
-
-echo "Backup completed: $DATE"
+cd /opt/niteputter
+docker-compose -f docker-compose.production.yml exec -T backend \
+  python scripts/backup_database.py backup --s3 --cleanup
 EOF
 
-sudo chmod +x /opt/backup-niteputter.sh
+chmod +x /opt/scripts/backup.sh
 
-# Setup cron job for daily backups
-sudo crontab -e
-# Add: 0 2 * * * /opt/backup-niteputter.sh >> /var/log/backup.log 2>&1
+# Add to crontab (daily at 2 AM)
+(crontab -l 2>/dev/null; echo "0 2 * * * /opt/scripts/backup.sh") | crontab -
 ```
 
-## 📊 Monitoring & Logging
+### Manual Backup
 
-### 1. Application Monitoring
 ```bash
-# Install monitoring tools
-npm install -g pm2-logrotate
-pm2 install pm2-server-monit
+# Create backup
+docker-compose -f docker-compose.production.yml exec backend \
+  python scripts/backup_database.py backup --s3
 
-# Setup log rotation
-pm2 set pm2-logrotate:max_size 100M
-pm2 set pm2-logrotate:compress true
-pm2 set pm2-logrotate:retain 30
+# List backups
+docker-compose -f docker-compose.production.yml exec backend \
+  python scripts/backup_database.py list
+
+# Restore from backup
+docker-compose -f docker-compose.production.yml exec backend \
+  python scripts/backup_database.py restore \
+  --backup-file mongodb_backup_20240101_020000.tar.gz
 ```
 
-### 2. Health Check Endpoint
-Add to your monitoring system:
-- **API Health**: `https://your-domain.com/api/` 
-- **Database**: Monitor MongoDB connection
-- **SSL Certificate**: Check expiry dates
+## 🔧 Troubleshooting
 
-## 🔄 Maintenance Tasks
+### Common Issues and Solutions
 
-### Daily
-- [ ] Check application logs for errors
-- [ ] Monitor server resources (CPU, RAM, Disk)
-- [ ] Verify backup completion
+#### 1. Container Won't Start
 
-### Weekly  
-- [ ] Review API error rates and response times
-- [ ] Check SSL certificate status
-- [ ] Update security patches: `sudo apt update && sudo apt upgrade`
-
-### Monthly
-- [ ] Review and analyze user analytics
-- [ ] Test backup restoration process
-- [ ] Update dependencies: `npm audit` and `pip list --outdated`
-- [ ] Review and rotate API keys if needed
-
-### Quarterly
-- [ ] Full security audit
-- [ ] Performance optimization review
-- [ ] Database optimization and indexing review
-- [ ] Disaster recovery testing
-
-## 🚨 Troubleshooting
-
-### Common Issues
-
-**503 Service Unavailable**
 ```bash
-# Check PM2 processes
-pm2 status
-pm2 logs niteputter-api
+# Check logs
+docker-compose -f docker-compose.production.yml logs backend
+
+# Check container status
+docker ps -a
+
+# Restart container
+docker-compose -f docker-compose.production.yml restart backend
+```
+
+#### 2. Database Connection Issues
+
+```bash
+# Test MongoDB connection
+docker-compose -f docker-compose.production.yml exec backend \
+  python -c "from app.database import connect_to_mongodb; import asyncio; asyncio.run(connect_to_mongodb())"
+
+# Check MongoDB logs
+docker-compose -f docker-compose.production.yml logs mongodb
+```
+
+#### 3. High Memory Usage
+
+```bash
+# Check memory usage
+docker stats
+
+# Clear Docker cache
+docker system prune -a
 
 # Restart services
-pm2 restart all
+docker-compose -f docker-compose.production.yml restart
 ```
 
-**Database Connection Issues**
-```bash
-# Check MongoDB status
-sudo systemctl status mongod
-mongosh --eval "db.adminCommand('ismaster')"
-```
+#### 4. SSL Certificate Issues
 
-**SSL Certificate Issues**
 ```bash
+# Test SSL
+openssl s_client -connect niteputter.com:443
+
 # Renew certificate
-sudo certbot renew --dry-run
-sudo nginx -t && sudo systemctl reload nginx
+sudo certbot renew --force-renewal
+
+# Reload Nginx
+docker-compose -f docker-compose.production.yml exec nginx nginx -s reload
 ```
 
-**High Memory Usage**
+#### 5. Payment Processing Issues
+
 ```bash
-# Monitor processes
-htop
-pm2 monit
+# Check Stripe webhook
+curl -X POST https://api.niteputter.com/api/webhooks/stripe \
+  -H "Content-Type: application/json" \
+  -H "Stripe-Signature: $WEBHOOK_SECRET" \
+  -d @test-webhook.json
 
-# Restart if needed
-pm2 restart all
+# View payment logs
+docker-compose -f docker-compose.production.yml exec backend \
+  tail -f /app/logs/payment.log
 ```
 
-## 📞 Emergency Contacts
+## 🛠️ Maintenance
 
-- **Domain Registrar**: [Contact Information]
-- **Hosting Provider**: [Contact Information] 
-- **SSL Certificate**: Let's Encrypt (auto-renewal)
-- **Payment Processor**: Stripe Support
-- **Developer**: [Your Contact Information]
+### Daily Tasks
 
-## 📈 Scaling Considerations
+```bash
+# Check system health
+./scripts/deploy.sh production health
 
-### When to Scale
-- CPU usage consistently > 80%
-- Memory usage consistently > 80%
-- Response times > 2 seconds
-- Error rates > 1%
+# Review error logs
+docker-compose -f docker-compose.production.yml logs --tail=100 backend | grep ERROR
 
-### Scaling Options
-1. **Vertical Scaling**: Upgrade server resources
-2. **Horizontal Scaling**: Add load balancer and multiple servers
-3. **Database Scaling**: MongoDB replica sets or sharding
-4. **CDN**: Cloudflare for static assets
+# Monitor disk space
+df -h
+```
+
+### Weekly Tasks
+
+```bash
+# Update dependencies
+docker-compose -f docker-compose.production.yml pull
+
+# Clean up Docker resources
+docker system prune -f
+
+# Review security logs
+grep "Failed login" /app/logs/audit.log
+
+# Test backup restore
+# (Do this in staging environment)
+```
+
+### Monthly Tasks
+
+```bash
+# Security updates
+sudo apt update && sudo apt upgrade
+
+# Review and rotate logs
+find /var/log -name "*.log" -mtime +30 -delete
+
+# Performance analysis
+docker-compose -f docker-compose.production.yml exec backend \
+  python scripts/performance_report.py
+
+# Update SSL certificates
+sudo certbot renew
+```
+
+## 📈 Performance Optimization
+
+### Docker Optimization
+
+```yaml
+# Add to docker-compose.production.yml
+services:
+  backend:
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+```
+
+### Nginx Caching
+
+```nginx
+# Add to nginx.conf
+proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=api_cache:10m max_size=1g;
+
+location /api/products {
+    proxy_cache api_cache;
+    proxy_cache_valid 200 1h;
+    proxy_cache_use_stale error timeout updating;
+}
+```
+
+### Database Indexing
+
+```javascript
+// MongoDB indexes
+db.products.createIndex({"slug": 1}, {unique: true})
+db.products.createIndex({"category": 1, "status": 1})
+db.products.createIndex({"name": "text", "description": "text"})
+db.orders.createIndex({"customer_email": 1, "created_at": -1})
+db.reviews.createIndex({"product_id": 1, "rating": -1})
+```
+
+## 📱 Mobile Optimization
+
+```nginx
+# Add compression
+gzip on;
+gzip_types text/plain application/json application/javascript text/css;
+gzip_min_length 1000;
+
+# Enable HTTP/2
+listen 443 ssl http2;
+
+# Add cache headers
+location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+}
+```
+
+## 🔐 Security Hardening
+
+```bash
+# Firewall setup
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+
+# Fail2ban installation
+sudo apt install fail2ban
+sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+sudo systemctl enable fail2ban
+sudo systemctl start fail2ban
+
+# Security audit
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy image niteputter/backend:latest
+```
+
+## 📞 Support
+
+- **Technical Issues**: tech-support@niteputter.com
+- **Security Issues**: security@niteputter.com
+- **Emergency Hotline**: +1-XXX-XXX-XXXX
+- **Documentation**: https://docs.niteputter.com
+- **Status Page**: https://status.niteputter.com
 
 ---
 
-**Last Updated**: January 2025  
-**Version**: 1.0.0
-
-> ⚠️ **CRITICAL**: Always test deployments in a staging environment first. Never deploy directly to production without testing.
+© 2024 NitePutter Pro. All rights reserved.

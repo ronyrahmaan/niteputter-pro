@@ -1,88 +1,158 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# IDE and editors
-.idea/
-.vscode/
-
-# Dependencies
-node_modules/
-/node_modules
-/.pnp
-.pnp.js
-.yarn/install-state.gz
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# Testing
-/coverage
-
-# Next.js
-/.next/
-/out/
-next-env.d.ts
-*.tsbuildinfo
-
-# Production builds
-/build
-dist/
-dist
-
-# Environment files (comprehensive coverage)
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+VENV/
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
 .env.production
-.env.staging
-backend/.env
-frontend/.env
-*token.json*
-*credentials.json*
+.env.*.local
+*.env
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+*.log
 
-# Logs and debug files
+# Node
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+lerna-debug.log*
 .pnpm-debug.log*
-dump.rdb
+.npm
+.yarn-integrity
+*.tsbuildinfo
+.eslintcache
 
-# System files
+# Build outputs
+/frontend-v2/dist
+/frontend-v2/build
+/backend/dist
+/backend/build
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 .DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+/data
+/mongodb_data
+/redis_data
+
+# Uploads and media
+/uploads
+/media
+/static
+/backend/uploads
+/backend/media
+/backend/static
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+/backend/logs
+
+# Testing
+/coverage
+/.nyc_output
+/test-results
+/playwright-report
+/playwright/.cache
+
+# Security - Never commit these!
+*.key
 *.pem
+*.crt
+*.cert
+/ssl
+/certificates
+/secrets
 
-# Python
-__pycache__/
-*pyc*
-venv/
-.venv/
+# Backup files
+*.backup
+*.bak
+*.tmp
+/backups
 
-# Development tools
-chainlit.md
-.chainlit
-.ipynb_checkpoints/
-.ac
+# Docker
+docker-compose.override.yml
+.dockerignore
 
-# Deployment
-.vercel
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# Data and databases
-agenthub/agents/youtube/db
+# Stripe
+stripe.exe
+stripe-cli
 
-# Archive files and large assets
-**/*.zip
-**/*.tar.gz
-**/*.tar
-**/*.tgz
-*.pack
-*.deb
-*.dylib
+# AWS
+.aws/
+aws-exports.js
 
-# Build caches
+# Temporary files
+*.tmp
+*.temp
+/tmp
+/temp
+
+# Production files
+/production
+*.production.yml
+.env.production.local
+
+# Cache
 .cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist
+.serverless/
+.fusebox/
+.dynamodb/
 
-# Mobile development
-android-sdk/ 
+# Lock files (optional - you may want to commit these)
+# package-lock.json
+# yarn.lock
+# Pipfile.lock
